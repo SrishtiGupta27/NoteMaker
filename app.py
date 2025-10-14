@@ -1,5 +1,4 @@
 import os
-import re
 from dotenv import load_dotenv
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
@@ -9,9 +8,7 @@ from langchain_google_community import GoogleDriveLoader
 from langchain_groq import ChatGroq
 
 
-# ==============================
 # Custom Prompt Template
-# ==============================
 
 custom_prompt = """
 <task>
@@ -47,107 +44,85 @@ Use line breaks between sections for readability.
 </output_format>
 """
 
-# ==============================
-# Environment Setup
-# ==============================
+# Load Environment Variables
 
 load_dotenv()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 if not GROQ_API_KEY:
-    raise ValueError("❌ GROQ_API_KEY not found. Add it to your .env file.")
+    raise ValueError(" GROQ_API_KEY not found. Add it to your .env file.")
 
 
-# ==============================
-# Helper: Extract Folder ID
-# ==============================
-
-def extract_folder_id(folder_input: str) -> str:
-    """
-    Extracts the Google Drive folder ID from a link or returns the ID if already given.
-    """
-    match = re.search(r"/folders/([a-zA-Z0-9_-]+)", folder_input)
-    if match:
-        return match.group(1)
-    else:
-        return folder_input.strip()
-
-
-# ==============================
 # Fetch All Google Docs From a Folder
-# ==============================
 
-def fetch_all_docs_from_folder(folder_input: str):
+def fetch_all_docs_from_folder(folder_id: str):
     """
-    Fetches all Google Docs from a specific Google Drive folder (link or ID),
+    Fetches all Google Docs from a specific Google Drive folder,
     converts each to text, and saves them in the data/transcripts folder.
     """
-    folder_id = extract_folder_id(folder_input)
-    print(f"📂 Fetching all Google Docs from folder ID: {folder_id}")
 
+    print(f" Fetching all Google Docs from folder ID: {folder_id}")
     if not folder_id:
-        print("❌ No valid folder ID found. Skipping fetch.")
+        print(" No folder ID provided. Skipping fetch.")
         return 0
+    else:
+        print("Success!!")
 
-    # Ensure credentials exist
+# https://drive.google.com/drive/folders/1KtbksA2D6I2cFzplbxfahN2ZVnnTlstb?usp=sharing
+
+    # Ensure credentials path is absolute and directory exists
     creds_path = os.path.abspath(".credentials/credentials.json")
     token_path = os.path.abspath(".credentials/token.json")
     os.makedirs(os.path.dirname(creds_path), exist_ok=True)
 
-    # Initialize loader
-    try:
-        loader = GoogleDriveLoader(
-            folder_id=folder_id,
-            recursive=True,
-            credentials_path=creds_path,
-            token_path=token_path,
-            load_auth=True,
-        )
-        docs = loader.load()
-    except Exception as e:
-        print(f"❌ Error fetching documents: {e}")
-        return 0
-
-    if not docs:
-        print("⚠️ No documents found in the specified Google Drive folder.")
-        print("👉 Ensure the folder contains Google Docs and is shared with your credentials.")
-        return 0
-
-    print(f"✅ Documents loaded: {len(docs)}")
+    # Create loader (auto-uses OAuth credentials or service account)
+    loader = GoogleDriveLoader(
+        folder_id=folder_id,
+        recursive=True,  # Set True if you want subfolders too
+        credentials_path=creds_path,  # path to your credentials file
+        token_path=token_path,  # path to your token file
+        load_auth=True,  # Use OAuth flow with credentials.json
+    )
+    docs = loader.load()
+    
+    print(f"Documents loaded: {len(docs)}")
     for doc in docs:
-        print(f"  - {doc.metadata.get('name')} ({doc.metadata.get('mimeType')})")
+        print(f"  - {doc.metadata.get('name')} (type: {doc.metadata.get('mimeType')})")
 
-    # Ensure output folder exists
+        if not docs:
+            print(" No documents found in the specified Google Drive folder.")
+            print(" Please check the folder ID and ensure it contains supported file types (Google Docs, Sheets, Presentations).")
+            return 0
+
+
+
+    # Ensure folder exists
     transcripts_folder = "data/transcripts"
     os.makedirs(transcripts_folder, exist_ok=True)
 
-    # Save each document as .txt
+    # Save each doc as .txt
     for i, doc in enumerate(docs):
         safe_title = doc.metadata.get("name", f"doc_{i+1}")
         filename = f"{safe_title.replace(' ', '_').replace('/', '_')}.txt"
         output_path = os.path.join(transcripts_folder, filename)
 
+ 
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(doc.page_content)
 
-        print(f"💾 Saved {filename} ({len(doc.page_content)} chars)")
+        print(f"Saved {filename} ({len(doc.page_content)} chars)")
 
-    print("✅ All Google Docs fetched and saved to data/transcripts/")
+    print("All Google Docs fetched and saved to data/transcripts/")
     return len(docs)
 
-
-# ==============================
 # Summarize One Transcript
-# ==============================
 
 def summarize_meeting(file_path: str, prompt_template: str):
-    """
-    Summarizes a single transcript file using FAISS + Groq LLM.
-    """
+    """Summarizes a single transcript file using RAG + Groq LLM."""
     with open(file_path, "r", encoding="utf-8") as f:
         text = f.read()
 
-    # Split transcript into chunks
+    # Split transcript into smaller chunks
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
     chunks = splitter.split_text(text)
     docs = [Document(page_content=chunk) for chunk in chunks]
@@ -175,14 +150,12 @@ Task:
 {prompt_template}
 """
 
-    # Generate summary
+    # Generate the summary
     result = llm.invoke(final_prompt)
     return result.content
 
 
-# ==============================
 # Main Runner
-# ==============================
 
 if __name__ == "__main__":
     transcripts_folder = "data/transcripts"
@@ -191,26 +164,28 @@ if __name__ == "__main__":
     os.makedirs(transcripts_folder, exist_ok=True)
     os.makedirs(summary_folder, exist_ok=True)
 
-    # Provide your folder link or ID here 👇
+    # Optional: Fetch from Google Drive Folder (first step)
+    # Replace this ID with your Drive folder’s ID
     folder_link = "https://drive.google.com/drive/folders/1KtbksA2D6I2cFzplbxfahN2ZVnnTlstb?usp=sharing"
+    fetch_all_docs_from_folder(folder_link)
 
-    # Fetch documents
     docs_fetched_count = fetch_all_docs_from_folder(folder_link)
 
-    # Stop if no docs fetched
+    # If no documents were fetched, stop the script.
     if docs_fetched_count == 0:
-        print("\n🚫 Halting script because no documents were fetched.")
+        print("\nHalting script because no documents were fetched.")
         exit()
 
-    # Summarize all fetched transcripts
+    # Then summarize all fetched transcripts
     for filename in os.listdir(transcripts_folder):
         if filename.endswith(".txt"):
             file_path = os.path.join(transcripts_folder, filename)
-            print(f"\n🧠 Summarizing {filename} ...")
+            print(f"\n Summarizing {filename} ...")
 
             summary = summarize_meeting(file_path, custom_prompt)
 
-            print(f"\n--- 📝 Meeting Summary for {filename} ---\n")
+            # Print summary to console
+            print(f"\n--- Meeting Summary for {filename} ---\n")
             print(summary)
 
             # Save summary
@@ -218,6 +193,8 @@ if __name__ == "__main__":
             summary_path = os.path.join(summary_folder, summary_filename)
             with open(summary_path, "w", encoding="utf-8") as f:
                 f.write(summary)
-            print(f"✅ Saved summary to {summary_path}")
+            print(f" Saved summary to {summary_path}")
 
-    print("\n🎉 All summaries generated successfully!")
+    print("\n All summaries generated successfully!")
+
+# https://drive.google.com/drive/folders/1KtbksA2D6I2cFzplbxfahN2ZVnnTlstb?usp=sharing
