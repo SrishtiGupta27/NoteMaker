@@ -1,0 +1,11 @@
+langchain
+langchain-groq
+sentence-transformers
+faiss-cpu
+python-dotenv
+langchain-community
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+google-api-python-client
+langchain-google-community
