@@ -1,22 +1,27 @@
-# Meeting Summarizer with Google Drive Integration
+Here’s an updated **README** tailored for your **Streamlit version** with vectorized knowledge base and Q&A functionality:
+
+---
+
+# Meeting Summarizer & Transcript Q&A with Google Drive Integration
 
 ## Overview
 
-This Python project automatically fetches Google Docs from a Google Drive folder, converts them to text, and summarizes them into structured meeting notes using **RAG (retrieval-augmented generation)** with a **Groq LLM**.
+This Python project fetches Google Docs from a Google Drive folder, converts them to text, and optionally summarizes them. It also builds **FAISS embeddings** for semantic search, allowing you to **ask questions interactively across all transcripts** using a **Groq LLM**.
 
-The summaries follow a professional, neutral, and concise format, ideal for therapy, coaching, mentoring, or consulting session transcripts.
+The system ensures confidentiality by **never revealing personal names or identifiers** from transcripts.
 
 ---
 
 ## Features
 
-* ✅ Fetch all Google Docs from a Google Drive folder (supports folder **links or IDs**)
-* ✅ Converts Google Docs to `.txt` files locally
-* ✅ Chunking with **RecursiveCharacterTextSplitter** for large transcripts
+* ✅ Fetch Google Docs from a Google Drive folder (hard-coded folder ID)
+* ✅ Convert Google Docs to `.txt` locally
+* ✅ Only fetches new files; skips already saved transcripts
 * ✅ Creates **FAISS embeddings** for semantic search
-* ✅ Summarizes meetings using **Groq LLM** and a customizable prompt template
-* ✅ Saves summaries in a dedicated folder
-* ✅ Error handling for missing credentials, empty folders, or invalid links
+* ✅ Maintains a **vectorized knowledge base** for all transcripts
+* ✅ Interactive **Q&A interface** using Streamlit
+* ✅ Strictly answers based on the knowledge base; no personal names shown
+* ✅ Error handling for missing credentials, empty folders, or permissions issues
 
 ---
 
@@ -25,14 +30,14 @@ The summaries follow a professional, neutral, and concise format, ideal for ther
 ```
 project/
 │
-├─ app.py                 # Main script
+├─ app.py      # Streamlit app script
 ├─ .env                   # Environment variables (GROQ_API_KEY)
 ├─ .credentials/          # Google API credentials folder
 │    ├─ credentials.json
 │    └─ token.json
 ├─ data/
 │    ├─ transcripts/      # Fetched Google Docs as .txt
-│    └─ summary/          # Generated summaries
+│    └─ vectors/          # FAISS vector stores for transcripts
 └─ README.md
 ```
 
@@ -44,6 +49,7 @@ project/
 * Pip packages (install via `pip install -r requirements.txt`):
 
 ```
+streamlit
 langchain
 langchain-community
 langchain-groq
@@ -63,7 +69,7 @@ faiss-cpu
 3. Create **OAuth 2.0 credentials** and download `credentials.json`.
 4. Place `credentials.json` in `.credentials/` folder.
 
-> The script will automatically generate `token.json` after the first authentication.
+> The app will generate `token.json` automatically after the first authentication.
 
 ---
 
@@ -86,61 +92,48 @@ pip install -r requirements.txt
 Or individually:
 
 ```bash
-pip install langchain langchain-community langchain-groq python-dotenv google-api-python-client faiss-cpu
+pip install streamlit langchain langchain-community langchain-groq python-dotenv google-api-python-client faiss-cpu
 ```
 
 ---
 
 ## Usage
 
-### 1. Provide Google Drive Folder
-
-You can use either a **folder link** or **folder ID**:
-
-```python
-folder_link = "https://drive.google.com/drive/folders/1KtbksA2D6I2cFzplbxfahN2ZVnnTlstb?usp=sharing"
-```
-
-### 2. Run the Script
+### 1. Run the Streamlit App
 
 ```bash
-python app.py
+streamlit run app2_streamlit.py
 ```
 
-The script will:
+The web interface has three steps:
 
-1. Fetch all Google Docs from the folder
-2. Save them as `.txt` in `data/transcripts/`
-3. Chunk the transcripts for semantic retrieval
-4. Summarize each transcript with **Groq LLM**
-5. Save summaries in `data/summary/`
+1. **Fetch new Google Docs** – Downloads only new files from the Drive folder.
+2. **Build/Load Vectors** – Creates FAISS embeddings for transcripts not yet vectorized.
+3. **Ask Questions** – Enter questions and receive answers based strictly on the knowledge base.
 
 ---
 
-### 3. Output Example
+### 2. Transcript Storage
 
-* `data/transcripts/Session_1.txt` → raw transcript
-* `data/summary/Session_1_summary.txt` → generated meeting summary
+* `data/transcripts/` → Stores raw transcript `.txt` files
+* `data/vectors/` → Stores FAISS vector files for each transcript
 
-Sample summary structure:
+---
+
+### 3. Sample Q&A Interaction
+
+**Question:**
+
+> What were the main strategies recommended in the last session?
+
+**Answer (from vector knowledge base):**
 
 ```
-Key Topics Discussed
-- Topic 1
-- Topic 2
-
-Insights or Advice Shared by the Expert
-- Key insight 1
-- Key insight 2
-
-Actions or Strategies Recommended
-- Action 1
-- Action 2
-
-Next Steps / Follow-up Items
-- Step 1
-- Step 2
+- Strategy 1: Implement a weekly progress check
+- Strategy 2: Schedule follow-up sessions for accountability
 ```
+
+> Names or personal identifiers are never revealed.
 
 ---
 
@@ -148,45 +141,41 @@ Next Steps / Follow-up Items
 
 ### 1. Prompt Template
 
-Modify `custom_prompt` in `app.py` to change:
+Modify the LLM prompt in `get_answer_from_db()` to change:
 
-* Tone (professional, casual, friendly, etc.)
-* Sections included
-* Instruction style (bullet points, tables, etc.)
-
----
+* Tone (professional, casual, friendly)
+* Instructions for handling context and restrictions
 
 ### 2. Chunk Size
 
 ```python
-splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
 ```
 
 Adjust `chunk_size` and `chunk_overlap` to control document chunking for FAISS embedding.
 
----
-
 ### 3. FAISS Retrieval
 
-* `k=5` → Number of chunks retrieved for summarization.
-* Increase for more context or reduce for faster processing.
+* `k=5` → Number of chunks retrieved per query
+* Increase for more context, reduce for faster answers
 
 ---
 
 ## Error Handling
 
-* ❌ **No folder ID / invalid link** → Script skips fetch
-* ⚠️ **Folder empty** → Script halts with warning
-* ❌ **Credentials missing** → Script raises error
-* ❌ **Private folder / permissions issue** → Google API will fail; ensure folder is shared with your OAuth account
+* ❌ **No folder ID / invalid folder** → Script skips fetch
+* ⚠️ **Empty folder** → No transcripts saved
+* ❌ **Missing credentials** → OAuth flow will fail
+* ❌ **Private folder / permission issues** → Ensure folder is shared with your OAuth account
 
 ---
 
 ## Tips
 
-* Always test with a **small folder** first.
-* Ensure Google Docs are **text-based** (Sheets/Slides may not render correctly).
-* Use descriptive file names in Google Drive for clean summary filenames.
+* Test with a small Drive folder first
+* Use descriptive file names in Google Drive for clean transcript names
+* Only text-based Google Docs are fully supported (Sheets/Slides may not render correctly)
 
 ---
 
+Do you want me to also **update the README with screenshots and Streamlit UI instructions** for a more professional look?
