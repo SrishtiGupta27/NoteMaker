@@ -11,8 +11,8 @@ from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-
 # CONFIG
+
 
 load_dotenv()
 
@@ -38,6 +38,7 @@ SCOPES = ["https://www.googleapis.com/auth/drive"]
 CREDS_PATH = ".credentials/credentials.json"
 TOKEN_PATH = ".credentials/token.json"
 
+
 def authorize_google_drive():
     os.makedirs(".credentials", exist_ok=True)
     if not os.path.exists(TOKEN_PATH):
@@ -45,6 +46,7 @@ def authorize_google_drive():
         creds = flow.run_local_server(port=0)
         with open(TOKEN_PATH, "w") as token_file:
             token_file.write(creds.to_json())
+
 
 authorize_google_drive()
 
@@ -118,16 +120,31 @@ def get_answer_from_db(db, query):
     context = "\n".join([d.page_content for d in docs])
 
     prompt = f"""
+
 <TASK>
-You are an AI assistant. Answer the user's question using ONLY the knowledge extracted from the provided context (vectorized transcripts).
-Focus on providing accurate, concise, and professional answers.
+You are an AI meeting assistant called "NoteMaker".
+Respond in the **first person** and maintain a natural, conversational tone.
+Make it clear that you are an AI assistant, but speak directly to the user — not as an observer of others.
+Your responses must be based ONLY on the information provided in the context (vectorized transcripts).
 </TASK>
 
-<RESTRICTIONS>
-- Do not reference any names, personal details, or sensitive information from the transcripts
-- Do not make assumptions beyond the context provided
-- Answer strictly based on the knowledge base
-</RESTRICTIONS>
+<STRICT PRIVACY & CONTENT RULES>
+NEVER mention, quote, or refer to:
+- Any names, people, or participants
+- Phrases like “someone said”, “a team member mentioned”, or similar
+- Any private, sensitive, or identifying details
+- Any company names, internal project titles, or specific data
+
+ALWAYS:
+- Speak as if you are directly assisting the user.
+- Offer clear, factual, and supportive guidance or answers.
+- Use first-person tone (“I recommend…”, “I suggest…”, “Here’s what you can do…”).
+- Keep the response concise and professional.
+- Stay within the information in the context — no assumptions or inventions.
+
+If the context does not provide enough information to answer, say:
+“I don’t have enough details to answer that precisely, but I can suggest some general steps if you’d like.”
+</STRICT PRIVACY & CONTENT RULES>
 
 <CONTEXT>
 {context}
@@ -138,46 +155,81 @@ Focus on providing accurate, concise, and professional answers.
 </QUESTION>
 
 <INSTRUCTIONS>
-- Use clear and professional language
-- Keep answers concise, factual, and neutral
-- Never reveal names or personal identifiers
+- Begin by acknowledging you are an AI assistant (“I’m an AI assistant here to help…”).
+- Speak **directly** to the user with advice, explanation, or insight.
+- Do **not** mention transcripts, participants, or discussions.
+- Focus on providing value, not meta-description.
 </INSTRUCTIONS>
 
 <ANSWER>
 """
+
+
+
+
+
     response = llm.invoke(prompt)
     return response.content
 
-# STREAMLIT APP
 
 
-st.set_page_config(page_title="Transcript QA", layout="wide")
-st.title(" Google Docs Transcript Q&A")
+# STREAMLIT APP (ENHANCED UI)
 
-# Step 1: Fetch new documents
-st.header("Step 1: Fetch new Google Docs")
-if st.button("Fetch Documents from Drive"):
-    new_count, new_files = fetch_new_google_docs()
-    st.success(f"Fetched {new_count} new transcripts.")
-    if new_files:
-        st.write("New files added:", new_files)
 
-# Step 2: Build/load vectors
-st.header("Step 2: Build/load vector knowledge base")
-if st.button("Build/Load Vectors"):
-    db = build_or_load_vectors()
-    if db:
-        st.success("Knowledge base ready for Q&A!")
-    else:
-        st.error("Failed to build vector knowledge base.")
+st.set_page_config(page_title="NoteMaker", layout="wide", page_icon="")
 
-# Step 3: Ask questions
-st.header("Step 3: Ask Questions")
+st.markdown(
+    """
+    <h1 style='text-align: center; color: #2C3E50;'> NoteMaker — Meeting Summarizer & Q&A Assistant</h1>
+    <p style='text-align: center; color: gray;'>Fetch meeting notes from Google Drive and ask intelligent questions from your transcripts.</p>
+    <hr>
+    """,
+    unsafe_allow_html=True,
+)
+
+# Initialize session state
 if "db" not in st.session_state:
     st.session_state.db = build_or_load_vectors()
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-query = st.text_input("Ask a question across all transcripts:")
-if query and st.session_state.db:
-    with st.spinner("Fetching answer..."):
-        answer = get_answer_from_db(st.session_state.db, query)
-    st.markdown(f"**Answer:** {answer}")
+# Sidebar for actions
+with st.sidebar:
+    st.header(" Document Management")
+    if st.button(" Fetch Documents"):
+        with st.spinner("Fetching Google Docs..."):
+            new_count, new_files = fetch_new_google_docs()
+        st.success(f"Fetched {new_count} new transcript(s).")
+        if new_files:
+            st.write("New Files:", new_files)
+
+    if st.button(" Build / Reload Vectors"):
+        with st.spinner("Building FAISS vector store..."):
+            st.session_state.db = build_or_load_vectors()
+        if st.session_state.db:
+            st.success("Knowledge base ready!")
+        else:
+            st.error("Failed to build vector knowledge base.")
+
+# Main chat area
+st.subheader(" Ask Questions")
+
+query = st.chat_input("Type your question here...")
+
+if query:
+    st.session_state.messages.append({"role": "user", "content": query})
+    if st.session_state.db:
+        with st.spinner("Thinking..."):
+            answer = get_answer_from_db(st.session_state.db, query)
+        st.session_state.messages.append({"role": "assistant", "content": answer})
+    else:
+        st.warning(" Please build or load the knowledge base first.")
+
+# Display chat conversation
+for msg in st.session_state.messages:
+    if msg["role"] == "user":
+        with st.chat_message("user"):
+            st.markdown(msg["content"])
+    else:
+        with st.chat_message("assistant"):
+            st.markdown(msg["content"])
