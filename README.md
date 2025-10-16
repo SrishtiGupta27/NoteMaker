@@ -163,10 +163,10 @@ Adjust `chunk_size` and `chunk_overlap` to control document chunking for FAISS e
 
 ## Error Handling
 
-* ❌ **No folder ID / invalid folder** → Script skips fetch
-* ⚠️ **Empty folder** → No transcripts saved
-* ❌ **Missing credentials** → OAuth flow will fail
-* ❌ **Private folder / permission issues** → Ensure folder is shared with your OAuth account
+* **No folder ID / invalid folder** → Script skips fetch
+* **Empty folder** → No transcripts saved
+* **Missing credentials** → OAuth flow will fail
+* **Private folder / permission issues** → Ensure folder is shared with your OAuth account
 
 ---
 
