@@ -176,6 +176,3 @@ Adjust `chunk_size` and `chunk_overlap` to control document chunking for FAISS e
 * Use descriptive file names in Google Drive for clean transcript names
 * Only text-based Google Docs are fully supported (Sheets/Slides may not render correctly)
 
----
-
-Do you want me to also **update the README with screenshots and Streamlit UI instructions** for a more professional look?
