@@ -10,3 +10,7 @@ google-auth-httplib2
 google-api-python-client
 langchain-google-community
 streamlit
+fastapi
+uvicorn
+python-multipart
+pydantic
