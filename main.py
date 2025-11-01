@@ -1,93 +1,110 @@
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import RedirectResponse, HTMLResponse
 from typing import Dict, Any
-from core_logic import (
-    get_auth_flow, complete_authorization, get_drive_service_from_token,
-    fetch_and_process_session_files, generate_cumulative_summary, 
-    vectorize_cumulative_summary, get_answer_from_user_db, 
-    QueryRequest, StatusResponse
+from pydantic import BaseModel  # Standard practice: Define Pydantic models here.
+from .core_logic import (
+    
+    
+    # New Core Logic Functions 
+    process_transcript_via_api,             # API Stage 1
+    update_and_vectorize_knowledge_base,    # API Stage 2
+    get_answer_from_user_db,                # API Stage 3
+    
+    # Stable Filenames (For reference, if needed) 
+    CUMULATIVE_SUMMARY_FILENAME,
 )
 
+# Define Pydantic Models for Request/Response Bodies (Best practice is to define them here) 
+
+class TranscriptRequest(BaseModel):
+    user_id: str
+    file_id: str # Unique ID for the session (e.g., UUID or timestamp)
+    transcript_text: str
+
+class QueryRequest(BaseModel):
+    user_id: str
+    query: str
+
+class StatusResponse(BaseModel):
+    status: str
+    message: str
+    data: Dict[str, Any] = {}
+
+class KBUpdateRequest(BaseModel):
+    user_id: str
+
+
+# FastAPI Application Setup 
 app = FastAPI(title="NoteMaker AI Assistant API")
 
-# Temporary storage for the Google OAuth flow object
-# IMPORTANT: In a production setting, replace this with a persistent store (e.g., Redis)
-OAUTH_FLOW_STATE: Dict[str, Any] = {}
+# 1. Data Ingestion and Summarization Endpoint (API Stage 1) 
 
-# --- 1. Authorization Endpoints ---
+@app.post("/summarize", response_model=StatusResponse)
+async def summarize_transcript(request: TranscriptRequest):
+    """
+    Ingests a raw transcript, converts it to a .txt file, generates a session summary, 
+    and saves the summary JSON in the user's folder.
+    """
+    user_id = request.user_id
+    file_id = request.file_id
+    transcript_text = request.transcript_text
 
-@app.get("/authorize")
-async def authorize(request: Request):
-    """Starts the Google Drive OAuth flow."""
-    # The callback URL must be exactly http://127.0.0.1:8000/google-oauth-callback (or your public URL)
-    callback_url = str(request.url).replace("/authorize", "/google-oauth-callback")
-    
-    try:
-        flow = get_auth_flow(request_url=callback_url)
-        auth_url, state = flow.authorization_url(prompt='consent')
-        
-        # Store the flow object
-        OAUTH_FLOW_STATE[state] = flow
-        
-        return RedirectResponse(auth_url)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Authorization setup failed. Ensure .credentials/credentials.json is correct: {e}")
-
-@app.get("/google-oauth-callback")
-async def google_oauth_callback(state: str, code: str = None):
-    """Receives the authorization code from Google and completes the process."""
-    if not code:
-        return StatusResponse(status="error", message="Authorization denied by user.")
-
-    if state not in OAUTH_FLOW_STATE:
-        raise HTTPException(status_code=400, detail="Invalid state parameter. Authorization flow lost.")
-
-    flow = OAUTH_FLOW_STATE.pop(state) # Get and remove the flow object
-    
-    try:
-        complete_authorization(flow, code)
-        return StatusResponse(status="success", message="Google Drive authorized successfully and token saved to .credentials/token.json.")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Token exchange failed: {e}")
-
-
-# --- 2. Sync/Update Endpoint ---
-
-@app.post("/sync-data/{user_id}", response_model=StatusResponse)
-async def sync_data(user_id: str):
-    """Fetches documents, generates session summaries, combines into cumulative summary, and vectorizes."""
-    if not user_id:
-        raise HTTPException(status_code=400, detail="User ID is required.")
-
-    service = get_drive_service_from_token()
-    if not service:
-        raise HTTPException(status_code=401, detail="Google Drive not authorized. Please run /authorize first.")
+    if not user_id or not file_id:
+        raise HTTPException(status_code=400, detail="User ID and File ID are required.")
 
     try:
-        # 1. Fetch, convert, and generate individual session summaries
-        summary_paths = fetch_and_process_session_files(service, user_id)
-        
-        # 2. Generate cumulative summary from new session summaries
-        cum_summary_path = generate_cumulative_summary(user_id)
-        
-        # 3. Vectorize the final cumulative summary
-        vectorize_cumulative_summary(user_id)
+        # Calls the core logic to process the raw text and save the summary
+        summary_path = process_transcript_via_api(user_id, file_id, transcript_text)
         
         return StatusResponse(
             status="success", 
-            message="Data sync, summarization, and vectorization completed.",
-            data={"new_sessions_processed": len(summary_paths), "cumulative_summary_path": cum_summary_path}
+            message="Transcript processed and individual session summary saved.",
+            data={"session_summary_path": summary_path}
         )
     except Exception as e:
-        # NOTE: A failure here could be due to API limits, file format errors, or LLM issues
-        raise HTTPException(status_code=500, detail=f"Data sync failed: {e}")
+        # NOTE: If this fails, check your GROQ_API_KEY environment variable and API access.
+        raise HTTPException(status_code=500, detail=f"Summarization failed: {e}")
 
 
-# --- 3. Query Endpoint ---
+# 2. Knowledge Base Update Endpoint (API Stage 2) 
+
+@app.post("/update-kb", response_model=StatusResponse)
+async def update_knowledge_base(request: KBUpdateRequest):
+    """
+    Consolidates ALL session summaries, generates a new cumulative summary, 
+    **vectorizes it using PGVector**, and updates the knowledge base.
+    """
+    user_id = request.user_id
+
+    if not user_id:
+        raise HTTPException(status_code=400, detail="User ID is required.")
+
+    try:
+        # Calls the core logic to update the cumulative summary and vector store (now PGVector)
+        status_message = update_and_vectorize_knowledge_base(user_id)
+        
+        if "No summaries" in status_message:
+             return StatusResponse(
+                status="warning", 
+                message=status_message,
+                data={}
+            )
+
+        return StatusResponse(
+            status="success", 
+            message=status_message,
+            data={"cumulative_summary_filename": CUMULATIVE_SUMMARY_FILENAME}
+        )
+    except Exception as e:
+        # NOTE: This can fail due to LLM errors, file system access, or **PostgreSQL connection/permissions**.
+        raise HTTPException(status_code=500, detail=f"Knowledge Base update failed: {e}")
+
+
+# 3. Query Endpoint (API Stage 3) 
 
 @app.post("/query", response_model=StatusResponse)
 async def query_assistant(request: QueryRequest):
-    """Answers a question based on the user's vectorized summary."""
+    """Answers a question based on the user's vectorized cumulative summary (now stored in PGVector)."""
     user_id = request.user_id
     query = request.query
 
@@ -97,6 +114,7 @@ async def query_assistant(request: QueryRequest):
     try:
         answer = get_answer_from_user_db(user_id, query)
         
+        # This check covers the case where the PGVector collection does not yet exist for the user
         if "No knowledge base found" in answer:
             return StatusResponse(
                 status="warning", 

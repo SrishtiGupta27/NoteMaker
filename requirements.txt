@@ -14,3 +14,27 @@ fastapi
 uvicorn
 python-multipart
 pydantic
+
+
+
+# --- Core LLM/LangChain Components ---
+langchain
+langchain-groq
+python-dotenv
+langchain-community
+
+# --- Text Embedding Model ---
+sentence-transformers
+
+# --- Database & Vector Store Components (PGVector) ---
+# PostgreSQL connector (required by PGVector)
+psycopg2-binary
+# LangChain PGVector integration (includes the necessary community components)
+langchain-community[pgvector]
+
+# --- Web/API Components ---
+streamlit
+fastapi
+uvicorn
+python-multipart
+pydantic
