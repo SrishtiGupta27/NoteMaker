@@ -32,7 +32,8 @@ class StatusResponse(BaseModel):
 
 class KBUpdateRequest(BaseModel):
     user_id: str
-
+    # New: Array of summary texts to be consolidated in this batch
+    session_summaries: list[str]
 
 # FastAPI Application Setup 
 app = FastAPI(title="NoteMaker AI Assistant API")
@@ -68,6 +69,41 @@ async def summarize_transcript(request: TranscriptRequest):
 
 # 2. Knowledge Base Update Endpoint (API Stage 2) 
 
+# @app.post("/update-kb", response_model=StatusResponse)
+# async def update_knowledge_base(request: KBUpdateRequest):
+#     """
+#     Consolidates ALL session summaries, generates a new cumulative summary, 
+#     **vectorizes it using PGVector**, and updates the knowledge base.
+#     """
+#     user_id = request.user_id
+
+#     if not user_id:
+#         raise HTTPException(status_code=400, detail="User ID is required.")
+
+#     try:
+#         # Calls the core logic to update the cumulative summary and vector store (now PGVector)
+#         status_message = update_and_vectorize_knowledge_base(user_id)
+        
+#         if "No summaries" in status_message:
+#              return StatusResponse(
+#                 status="warning", 
+#                 message=status_message,
+#                 data={}
+#             )
+
+#         return StatusResponse(
+#             status="success", 
+#             message=status_message,
+#             data={"cumulative_summary_filename": CUMULATIVE_SUMMARY_FILENAME}
+#         )
+#     except Exception as e:
+#         # NOTE: This can fail due to LLM errors, file system access, or **PostgreSQL connection/permissions**.
+#         raise HTTPException(status_code=500, detail=f"Knowledge Base update failed: {e}")
+
+
+
+
+# Find this:
 @app.post("/update-kb", response_model=StatusResponse)
 async def update_knowledge_base(request: KBUpdateRequest):
     """
@@ -76,12 +112,15 @@ async def update_knowledge_base(request: KBUpdateRequest):
     """
     user_id = request.user_id
 
-    if not user_id:
-        raise HTTPException(status_code=400, detail="User ID is required.")
+    # ... (rest of the checks) ...
+    # --- main.py: Replace the 'try' block in /update-kb ---
 
     try:
-        # Calls the core logic to update the cumulative summary and vector store (now PGVector)
-        status_message = update_and_vectorize_knowledge_base(user_id)
+        user_id = request.user_id
+        summaries_batch = request.session_summaries 
+        
+        # Calls the core logic to consolidate the batch and append to the vector store
+        status_message = update_and_vectorize_knowledge_base(user_id, summaries_batch)
         
         if "No summaries" in status_message:
              return StatusResponse(
@@ -93,13 +132,11 @@ async def update_knowledge_base(request: KBUpdateRequest):
         return StatusResponse(
             status="success", 
             message=status_message,
-            data={"cumulative_summary_filename": CUMULATIVE_SUMMARY_FILENAME}
+            data={"cumulative_summary_filename": CUMULATIVE_SUMMARY_FILENAME} 
         )
     except Exception as e:
-        # NOTE: This can fail due to LLM errors, file system access, or **PostgreSQL connection/permissions**.
         raise HTTPException(status_code=500, detail=f"Knowledge Base update failed: {e}")
-
-
+    
 # 3. Query Endpoint (API Stage 3) 
 
 @app.post("/query", response_model=StatusResponse)

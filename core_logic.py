@@ -130,7 +130,7 @@ Output the detailed session summary. Do not include any text outside the summary
         json.dump(summary_data, f, indent=4)
 
     print(f"Session summary saved: {session_summary_path}")
-    return session_summary_path
+    return session_summary_path, summary_data
 
 
 def process_transcript_via_api(user_id: str, file_id: str, transcript_text: str) -> str:
@@ -191,54 +191,109 @@ def get_all_session_summaries(user_summary_dir: str) -> list[str]:
     return all_summaries
 
 
-def update_and_vectorize_knowledge_base(user_id: str) -> str:
+# def update_and_vectorize_knowledge_base(user_id: str) -> str:
+#     """
+#     Reads ALL session summaries, generates a NEW cumulative summary, 
+#     and vectorizes the new one into PGVector. 
+#     This is the entry point for API 2.
+#     """
+#     _, user_summary_dir, _ = get_user_paths(user_id) 
+#     cum_summary_path = os.path.join(user_summary_dir, CUMULATIVE_SUMMARY_FILENAME)
+
+#     # 1. Gather ALL individual session summaries (the source of truth)
+#     all_session_summaries = get_all_session_summaries(user_summary_dir)
+    
+#     if not all_session_summaries:
+#         return "Status: No individual session summaries found to create a knowledge base."
+        
+#     # Combine all individual session summaries into one massive context string
+#     full_context_text = "\n\n---\n\n".join(all_session_summaries)
+    
+#     # 2. Generate the NEW cumulative summary (LLM Call)
+#     prompt = f"""
+# You are an AI assistant tasked with creating a single, cohesive, and comprehensive **cumulative summary** for a user's entire history.
+# Below is the content from ALL recorded session summaries.
+
+# <ALL_SESSION_SUMMARIES_CONTEXT>
+# {full_context_text}
+# </ALL_SESSION_SUMMARIES_CONTEXT>
+
+# Instructions:
+# 1. Consolidate and synthesize all information provided into one comprehensive, logical summary.
+# 2. **Do not repeat information** unless necessary for context. Update and integrate points.
+# 3. **Preserve all key points, decisions, action items, and important insights.**
+# 4. Organize the summary clearly using sections or bullet points for maximum readability and ease of reference.
+# 5. The final output must be the complete, current state of the user's knowledge base.
+
+# Output the refined cumulative summary. Do not include any text outside the summary.
+# """
+#     print(f"Generating NEW cumulative summary for {user_id} by consolidating {len(all_session_summaries)} sessions...")
+#     response = llm.invoke(prompt)
+#     new_cum_summary = response.content.strip()
+
+#     # 3. Save the NEW cumulative summary locally (optional but good for debugging/audit)
+#     with open(cum_summary_path, "w", encoding="utf-8") as f:
+#         f.write(new_cum_summary)
+
+#     # 4. Vectorize the new cumulative summary into PGVector
+#     vectorize_cumulative_summary(user_id, cum_summary_path)
+        
+#     return f"Status: Knowledge Base Successfully Rebuilt and Vectorized for {user_id} using PGVector. All session summaries ({len(all_session_summaries)} files) preserved."
+
+
+
+# --- core_logic.py: Replace the old update_and_vectorize_knowledge_base with this ---
+
+# NOTE: The helper function get_all_session_summaries is now unused and can be removed.
+
+def update_and_vectorize_knowledge_base(user_id: str, session_summaries_batch: list[str]) -> str:
     """
-    Reads ALL session summaries, generates a NEW cumulative summary, 
-    and vectorizes the new one into PGVector. 
+    Accepts a batch of session summaries, consolidates them via LLM, 
+    and adds the resulting consolidated document to the user's PGVector KB (appending).
     This is the entry point for API 2.
     """
-    _, user_summary_dir, _ = get_user_paths(user_id) 
-    cum_summary_path = os.path.join(user_summary_dir, CUMULATIVE_SUMMARY_FILENAME)
+    
+    if not session_summaries_batch:
+        return "Status: No session summaries found in the input batch to update the knowledge base."
+    
+    num_sessions = len(session_summaries_batch)
+    batch_id = time.time() # Unique ID for this specific batch insert
 
-    # 1. Gather ALL individual session summaries (the source of truth)
-    all_session_summaries = get_all_session_summaries(user_summary_dir)
+    # 1. Combine the batch summaries into one context string
+    full_context_text = "\n\n---\n\n".join(session_summaries_batch)
     
-    if not all_session_summaries:
-        return "Status: No individual session summaries found to create a knowledge base."
-        
-    # Combine all individual session summaries into one massive context string
-    full_context_text = "\n\n---\n\n".join(all_session_summaries)
-    
-    # 2. Generate the NEW cumulative summary (LLM Call)
+    # 2. Generate the NEW Consolidated Summary for THIS BATCH (LLM Call)
     prompt = f"""
-You are an AI assistant tasked with creating a single, cohesive, and comprehensive **cumulative summary** for a user's entire history.
-Below is the content from ALL recorded session summaries.
+You are an AI assistant tasked with creating a single, cohesive, and comprehensive **consolidated summary** from the following batch of {num_sessions} session summaries.
 
-<ALL_SESSION_SUMMARIES_CONTEXT>
+<SESSION_SUMMARIES_BATCH_CONTEXT>
 {full_context_text}
-</ALL_SESSION_SUMMARIES_CONTEXT>
+</SESSION_SUMMARIES_BATCH_CONTEXT>
 
 Instructions:
 1. Consolidate and synthesize all information provided into one comprehensive, logical summary.
 2. **Do not repeat information** unless necessary for context. Update and integrate points.
-3. **Preserve all key points, decisions, action items, and important insights.**
-4. Organize the summary clearly using sections or bullet points for maximum readability and ease of reference.
-5. The final output must be the complete, current state of the user's knowledge base.
+3. **Preserve all key points, decisions, action items, and important insights** from this batch.
+4. The final output must be the complete, refined summary of these specific sessions.
 
-Output the refined cumulative summary. Do not include any text outside the summary.
+Output the refined consolidated summary. Do not include any text outside the summary.
 """
-    print(f"Generating NEW cumulative summary for {user_id} by consolidating {len(all_session_summaries)} sessions...")
+    print(f"Generating consolidated summary for user {user_id} from a batch of {num_sessions} sessions...")
     response = llm.invoke(prompt)
-    new_cum_summary = response.content.strip()
+    new_batch_summary = response.content.strip()
 
-    # 3. Save the NEW cumulative summary locally (optional but good for debugging/audit)
+    # 3. Save the NEW consolidated summary locally (Optional Audit/Debugging)
+    _, user_summary_dir, _ = get_user_paths(user_id)
+    batch_summary_filename = f"consolidated_batch_{int(batch_id)}.txt"
+    cum_summary_path = os.path.join(user_summary_dir, batch_summary_filename)
+    
     with open(cum_summary_path, "w", encoding="utf-8") as f:
-        f.write(new_cum_summary)
+        f.write(new_batch_summary)
 
-    # 4. Vectorize the new cumulative summary into PGVector
-    vectorize_cumulative_summary(user_id, cum_summary_path)
+    # 4. Vectorize the new summary into PGVector (APPENDING)
+    vectorize_batch_for_appending(user_id, new_batch_summary, batch_id)
         
-    return f"Status: Knowledge Base Successfully Rebuilt and Vectorized for {user_id} using PGVector. All session summaries ({len(all_session_summaries)} files) preserved."
+    return f"Status: Knowledge Base successfully updated. Consolidated summary from {num_sessions} sessions appended to KB for {user_id}."
 
 
 def vectorize_cumulative_summary(user_id: str, cum_summary_path: str) -> None:
@@ -290,24 +345,92 @@ def vectorize_cumulative_summary(user_id: str, cum_summary_path: str) -> None:
     print(f"PGVector database updated for user {user_id} in collection: {collection_name}.")
 
 
-# CORE LOGIC: API STAGE 3 (QnA) 
+# --- core_logic.py: Add this function ---
 
-def load_user_vector_db(user_id: str) -> Optional[PGVectorType]:
-    """Loads the user's vector database (PGVector connection) from the data/vectors folder."""
+def vectorize_batch_for_appending(user_id: str, batch_text: str, batch_id: float) -> None:
+    """Chunks and vectorizes the new batch text, appending it to the PGVector KB."""
+    
+    # 1. Chunk the text
+    chunks = text_splitter.split_text(batch_text)
+    
+    # 2. Prepare texts and metadata
+    texts = chunks
+    metadatas = [
+        {"user_id": user_id, "source": f"batch_{int(batch_id)}"}
+        for chunk in chunks
+    ]
     
     collection_name = f"kb_{user_id}"
     
     try:
-        db = PGVector.from_existing_table(
-            embedding=embeddings,
-            table_name=collection_name,
-            connection_string=POSTGRES_CONNECTION_STRING
+        # A. Attempt to connect to the existing PGVector collection
+        db = PGVector(
+            collection_name=collection_name,
+            embedding_function=embeddings,
+            connection_string=POSTGRES_CONNECTION_STRING,
         )
-        return db
+        
+        # B. Append the new documents (texts) to the existing collection
+        db.add_texts(texts=texts, metadatas=metadatas)
+        
+        print(f"PGVector database appended with new batch for user {user_id}.")
+
     except Exception as e:
-        # A failed connection or missing table/data means the KB doesn't exist for the user
-        print(f"Error loading PGVector for user {user_id}. Collection likely missing. Error: {e}")
+        # If the collection doesn't exist (first run), this is the fallback to create it.
+        print(f"Collection {collection_name} not found. Creating new collection. Error: {e}")
+        
+        PGVector.from_texts(
+            texts=texts,
+            embedding=embeddings,
+            collection_name=collection_name,
+            connection_string=POSTGRES_CONNECTION_STRING,
+            metadatas=metadatas
+        )
+        print(f"PGVector database created and populated for user {user_id}.")    
+
+
+# CORE LOGIC: API STAGE 3 (QnA) 
+
+def load_user_vector_db(user_id: str) -> Optional[PGVectorType]:
+    """Loads the user's vector database (PGVector connection) for query."""
+    
+    collection_name = f"kb_{user_id}"
+    print(f"user_id:{user_id}, collection_name:{collection_name}")
+    
+    try:
+        # Final and stable connection method: Initialize the PGVector class directly
+        db = PGVector(
+            collection_name=collection_name,
+            embedding_function=embeddings,
+            connection_string=POSTGRES_CONNECTION_STRING,
+        )
+        
+        # --- CRITICAL FIX: The problematic db.get() check is REMOVED ---
+        
+        # If the initialization succeeds, we return the connected object
+        return db
+
+    except Exception as e:
+        # This logs any real connection failure (e.g., DB offline, bad credentials)
+        print(f"Error loading PGVector for user {user_id}. Error: {e}")
         return None
+
+# def load_user_vector_db(user_id: str) -> Optional[PGVectorType]:
+#     """Loads the user's vector database (PGVector connection) from the data/vectors folder."""
+    
+#     collection_name = f"kb_{user_id}"
+    
+#     try:
+#         db = PGVector.from_existing_table(
+#             embedding=embeddings,
+#             table_name=collection_name,
+#             connection_string=POSTGRES_CONNECTION_STRING
+#         )
+#         return db
+#     except Exception as e:
+#         # A failed connection or missing table/data means the KB doesn't exist for the user
+#         print(f"Error loading PGVector for user {user_id}. Collection likely missing. Error: {e}")
+#         return None
 
 
 def get_answer_from_user_db(user_id: str, query: str) -> str:
@@ -318,7 +441,12 @@ def get_answer_from_user_db(user_id: str, query: str) -> str:
 
     # We use the PGVector object directly
     retriever = db.as_retriever(search_kwargs={"k": 5})
-    docs = retriever.get_relevant_documents(query)
+
+    try:
+        docs = retriever.invoke(query)
+    except AttributeError:
+        # Fallback to direct call method if invoke() is also missing (common in older LangChain versions)
+        docs = retriever(query)
     context = "\n".join([d.page_content for d in docs])
 
     # Simplified QnA Prompt
