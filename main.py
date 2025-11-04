@@ -1,8 +1,9 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import RedirectResponse, HTMLResponse
 from typing import Dict, Any
 from pydantic import BaseModel  # Standard practice: Define Pydantic models here.
-from .core_logic import (
+import traceback
+from helpers.notemaker import (
     
     
     # New Core Logic Functions 
@@ -36,11 +37,11 @@ class KBUpdateRequest(BaseModel):
     session_summaries: list[str]
 
 # FastAPI Application Setup 
-app = FastAPI(title="NoteMaker AI Assistant API")
+router = APIRouter(prefix="/notemaker", tags=["NoteMaker"])
 
 # 1. Data Ingestion and Summarization Endpoint (API Stage 1) 
 
-@app.post("/summarize", response_model=StatusResponse)
+@router.post("/summarize", response_model=StatusResponse)
 async def summarize_transcript(request: TranscriptRequest):
     """
     Ingests a raw transcript, converts it to a .txt file, generates a session summary, 
@@ -63,57 +64,20 @@ async def summarize_transcript(request: TranscriptRequest):
             data={"session_summary_path": summary_path}
         )
     except Exception as e:
-        # NOTE: If this fails, check your GROQ_API_KEY environment variable and API access.
+        # NOTE: If this fails, check your OPENAI_API_KEY environment variable and API access.
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Summarization failed: {e}")
-
-
-# 2. Knowledge Base Update Endpoint (API Stage 2) 
-
-# @app.post("/update-kb", response_model=StatusResponse)
-# async def update_knowledge_base(request: KBUpdateRequest):
-#     """
-#     Consolidates ALL session summaries, generates a new cumulative summary, 
-#     **vectorizes it using PGVector**, and updates the knowledge base.
-#     """
-#     user_id = request.user_id
-
-#     if not user_id:
-#         raise HTTPException(status_code=400, detail="User ID is required.")
-
-#     try:
-#         # Calls the core logic to update the cumulative summary and vector store (now PGVector)
-#         status_message = update_and_vectorize_knowledge_base(user_id)
-        
-#         if "No summaries" in status_message:
-#              return StatusResponse(
-#                 status="warning", 
-#                 message=status_message,
-#                 data={}
-#             )
-
-#         return StatusResponse(
-#             status="success", 
-#             message=status_message,
-#             data={"cumulative_summary_filename": CUMULATIVE_SUMMARY_FILENAME}
-#         )
-#     except Exception as e:
-#         # NOTE: This can fail due to LLM errors, file system access, or **PostgreSQL connection/permissions**.
-#         raise HTTPException(status_code=500, detail=f"Knowledge Base update failed: {e}")
-
 
 
 
 # Find this:
-@app.post("/update-kb", response_model=StatusResponse)
+@router.post("/update-kb", response_model=StatusResponse)
 async def update_knowledge_base(request: KBUpdateRequest):
     """
     Consolidates ALL session summaries, generates a new cumulative summary, 
     **vectorizes it using PGVector**, and updates the knowledge base.
     """
     user_id = request.user_id
-
-    # ... (rest of the checks) ...
-    # --- main.py: Replace the 'try' block in /update-kb ---
 
     try:
         user_id = request.user_id
@@ -139,7 +103,7 @@ async def update_knowledge_base(request: KBUpdateRequest):
     
 # 3. Query Endpoint (API Stage 3) 
 
-@app.post("/query", response_model=StatusResponse)
+@router.post("/query", response_model=StatusResponse)
 async def query_assistant(request: QueryRequest):
     """Answers a question based on the user's vectorized cumulative summary (now stored in PGVector)."""
     user_id = request.user_id

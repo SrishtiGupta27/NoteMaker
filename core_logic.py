@@ -3,14 +3,12 @@ import json
 import time
 from dotenv import load_dotenv
 from langchain_community.embeddings import HuggingFaceEmbeddings
-# CHANGED: Replace FAISS with PGVector
 from langchain_community.vectorstores import PGVector
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_groq import ChatGroq
 from pydantic import BaseModel
 from typing import Dict, Any, Optional
-# ADDED: Import the base class for PGVector type hinting
 from langchain_community.vectorstores.pgvector import PGVector as PGVectorType 
+from langchain_openai import ChatOpenAI
 
 # CONFIGURATION & INITIAL SETUP 
 load_dotenv()
@@ -19,60 +17,47 @@ BASE_DIR = "./notemaker/data"
 # Transcript folder is now used for temporary storage for API 1
 TRANSCRIPT_DIR = os.path.join(BASE_DIR, "transcript") 
 SUMMARY_DIR = os.path.join(BASE_DIR, "summary")  
-# CHANGED: VECTOR_DIR is no longer strictly needed for PGVector, but kept for path utility
-VECTOR_DIR = os.path.join(BASE_DIR, "vectors")
 
 os.makedirs(TRANSCRIPT_DIR, exist_ok=True) 
 os.makedirs(SUMMARY_DIR, exist_ok=True)
-os.makedirs(VECTOR_DIR, exist_ok=True)
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-# ADDED: PostgreSQL Connection String
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 POSTGRES_CONNECTION_STRING = os.getenv("POSTGRES_CONNECTION_STRING")
 
-if not GROQ_API_KEY:
-    raise ValueError("GROQ_API_KEY not found in .env file")
+if not OPENAI_API_KEY:
+    raise ValueError("OPENAI_API_KEY not found in .env file")
 if not POSTGRES_CONNECTION_STRING:
     raise ValueError("POSTGRES_CONNECTION_STRING not found in .env file")
 
 
-# PGVector Configuration
-# Each user will get their own collection/table in the PostgreSQL database.
-# The collection name is derived from the user_id.
-# We no longer need VECTOR_INDEX_NAME as a global file name.
-
 # LLM and embeddings
-llm = ChatGroq(model_name="meta-llama/llama-4-maverick-17b-128e-instruct",
-               groq_api_key=GROQ_API_KEY)
+llm = ChatOpenAI(model_name="gpt-4o-mini",api_key=OPENAI_API_KEY)
 embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
 
 # Stable Filenames
 CUMULATIVE_SUMMARY_FILENAME = "cumulative_summary.txt"
-# REMOVED: VECTOR_INDEX_NAME - replaced by user-specific collection names
-
 
 # PATH MANAGEMENT 
 
-def get_user_paths(user_id: str) -> tuple[str, str, str]:
+def get_user_paths(user_id: str) -> tuple[str, str]:
     """Ensures user-specific directories exist and returns their paths."""
     user_transcript_dir = os.path.join(TRANSCRIPT_DIR, user_id) 
     user_summary_dir = os.path.join(SUMMARY_DIR, user_id)
     # The vector dir is less relevant for PGVector but kept for consistency
-    user_vector_dir = os.path.join(VECTOR_DIR, user_id) 
+   
     
     os.makedirs(user_transcript_dir, exist_ok=True)
     os.makedirs(user_summary_dir, exist_ok=True)
-    os.makedirs(user_vector_dir, exist_ok=True)
     
-    return user_transcript_dir, user_summary_dir, user_vector_dir
+    return user_transcript_dir, user_summary_dir
 
 
 # CORE LOGIC: API STAGE 1 (Summarization) 
 
 def generate_session_summary_from_file(raw_text_path: str, file_id: str, user_id: str) -> str:
     """Generates a summary from a local file and saves it as a JSON file."""
-    _, user_summary_dir, _ = get_user_paths(user_id) 
+    _, user_summary_dir = get_user_paths(user_id) 
     
     summary_filename = f"{file_id}.json"
     session_summary_path = os.path.join(user_summary_dir, summary_filename)
@@ -138,7 +123,7 @@ def process_transcript_via_api(user_id: str, file_id: str, transcript_text: str)
     Handles API intake, saves the raw text, generates a summary, and cleans up the raw text.
     This function is the entry point for API 1.
     """
-    user_transcript_dir, _, _ = get_user_paths(user_id)
+    user_transcript_dir, _ = get_user_paths(user_id)
     
     # 1. Save the raw transcript to a temporary .txt file
     temp_transcript_path = os.path.join(user_transcript_dir, f"{file_id}.txt")
@@ -152,7 +137,7 @@ def process_transcript_via_api(user_id: str, file_id: str, transcript_text: str)
         return f"Error: Failed to save raw transcript."
 
     # 2. Generate and save the session summary from the file
-    summary_path = generate_session_summary_from_file(
+    summary_path, _ = generate_session_summary_from_file(
         raw_text_path=temp_transcript_path, 
         file_id=file_id, 
         user_id=user_id
@@ -191,61 +176,6 @@ def get_all_session_summaries(user_summary_dir: str) -> list[str]:
     return all_summaries
 
 
-# def update_and_vectorize_knowledge_base(user_id: str) -> str:
-#     """
-#     Reads ALL session summaries, generates a NEW cumulative summary, 
-#     and vectorizes the new one into PGVector. 
-#     This is the entry point for API 2.
-#     """
-#     _, user_summary_dir, _ = get_user_paths(user_id) 
-#     cum_summary_path = os.path.join(user_summary_dir, CUMULATIVE_SUMMARY_FILENAME)
-
-#     # 1. Gather ALL individual session summaries (the source of truth)
-#     all_session_summaries = get_all_session_summaries(user_summary_dir)
-    
-#     if not all_session_summaries:
-#         return "Status: No individual session summaries found to create a knowledge base."
-        
-#     # Combine all individual session summaries into one massive context string
-#     full_context_text = "\n\n---\n\n".join(all_session_summaries)
-    
-#     # 2. Generate the NEW cumulative summary (LLM Call)
-#     prompt = f"""
-# You are an AI assistant tasked with creating a single, cohesive, and comprehensive **cumulative summary** for a user's entire history.
-# Below is the content from ALL recorded session summaries.
-
-# <ALL_SESSION_SUMMARIES_CONTEXT>
-# {full_context_text}
-# </ALL_SESSION_SUMMARIES_CONTEXT>
-
-# Instructions:
-# 1. Consolidate and synthesize all information provided into one comprehensive, logical summary.
-# 2. **Do not repeat information** unless necessary for context. Update and integrate points.
-# 3. **Preserve all key points, decisions, action items, and important insights.**
-# 4. Organize the summary clearly using sections or bullet points for maximum readability and ease of reference.
-# 5. The final output must be the complete, current state of the user's knowledge base.
-
-# Output the refined cumulative summary. Do not include any text outside the summary.
-# """
-#     print(f"Generating NEW cumulative summary for {user_id} by consolidating {len(all_session_summaries)} sessions...")
-#     response = llm.invoke(prompt)
-#     new_cum_summary = response.content.strip()
-
-#     # 3. Save the NEW cumulative summary locally (optional but good for debugging/audit)
-#     with open(cum_summary_path, "w", encoding="utf-8") as f:
-#         f.write(new_cum_summary)
-
-#     # 4. Vectorize the new cumulative summary into PGVector
-#     vectorize_cumulative_summary(user_id, cum_summary_path)
-        
-#     return f"Status: Knowledge Base Successfully Rebuilt and Vectorized for {user_id} using PGVector. All session summaries ({len(all_session_summaries)} files) preserved."
-
-
-
-# --- core_logic.py: Replace the old update_and_vectorize_knowledge_base with this ---
-
-# NOTE: The helper function get_all_session_summaries is now unused and can be removed.
-
 def update_and_vectorize_knowledge_base(user_id: str, session_summaries_batch: list[str]) -> str:
     """
     Accepts a batch of session summaries, consolidates them via LLM, 
@@ -283,7 +213,7 @@ Output the refined consolidated summary. Do not include any text outside the sum
     new_batch_summary = response.content.strip()
 
     # 3. Save the NEW consolidated summary locally (Optional Audit/Debugging)
-    _, user_summary_dir, _ = get_user_paths(user_id)
+    _, user_summary_dir = get_user_paths(user_id)
     batch_summary_filename = f"consolidated_batch_{int(batch_id)}.txt"
     cum_summary_path = os.path.join(user_summary_dir, batch_summary_filename)
     
@@ -317,10 +247,6 @@ def vectorize_cumulative_summary(user_id: str, cum_summary_path: str) -> None:
     # 3. Initialize PGVector with the collection name derived from user_id
     collection_name = f"kb_{user_id}"
     
-    # We use a helper function to delete and re-create the collection for a clean update
-    # Note: PGVector's from_texts will handle the insertion.
-    
-    # Clear the existing vector store for this user before inserting the new one
     try:
         # Tries to connect and delete the collection if it exists
         temp_db = PGVector.from_existing_table(
@@ -344,8 +270,6 @@ def vectorize_cumulative_summary(user_id: str, cum_summary_path: str) -> None:
     
     print(f"PGVector database updated for user {user_id} in collection: {collection_name}.")
 
-
-# --- core_logic.py: Add this function ---
 
 def vectorize_batch_for_appending(user_id: str, batch_text: str, batch_id: float) -> None:
     """Chunks and vectorizes the new batch text, appending it to the PGVector KB."""
@@ -405,32 +329,12 @@ def load_user_vector_db(user_id: str) -> Optional[PGVectorType]:
             connection_string=POSTGRES_CONNECTION_STRING,
         )
         
-        # --- CRITICAL FIX: The problematic db.get() check is REMOVED ---
-        
-        # If the initialization succeeds, we return the connected object
         return db
 
     except Exception as e:
         # This logs any real connection failure (e.g., DB offline, bad credentials)
         print(f"Error loading PGVector for user {user_id}. Error: {e}")
         return None
-
-# def load_user_vector_db(user_id: str) -> Optional[PGVectorType]:
-#     """Loads the user's vector database (PGVector connection) from the data/vectors folder."""
-    
-#     collection_name = f"kb_{user_id}"
-    
-#     try:
-#         db = PGVector.from_existing_table(
-#             embedding=embeddings,
-#             table_name=collection_name,
-#             connection_string=POSTGRES_CONNECTION_STRING
-#         )
-#         return db
-#     except Exception as e:
-#         # A failed connection or missing table/data means the KB doesn't exist for the user
-#         print(f"Error loading PGVector for user {user_id}. Collection likely missing. Error: {e}")
-#         return None
 
 
 def get_answer_from_user_db(user_id: str, query: str) -> str:
