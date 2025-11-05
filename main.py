@@ -19,11 +19,13 @@ from helpers.notemaker import (
 
 class TranscriptRequest(BaseModel):
     user_id: str
+    service_id: str
     file_id: str # Unique ID for the session (e.g., UUID or timestamp)
     transcript_text: str
 
 class QueryRequest(BaseModel):
     user_id: str
+    service_id: str
     query: str
 
 class StatusResponse(BaseModel):
@@ -33,6 +35,7 @@ class StatusResponse(BaseModel):
 
 class KBUpdateRequest(BaseModel):
     user_id: str
+    service_id: str
     # New: Array of summary texts to be consolidated in this batch
     session_summaries: list[str]
 
@@ -48,25 +51,69 @@ async def summarize_transcript(request: TranscriptRequest):
     and saves the summary JSON in the user's folder.
     """
     user_id = request.user_id
+    service_id = request.service_id
     file_id = request.file_id
     transcript_text = request.transcript_text
 
-    if not user_id or not file_id:
-        raise HTTPException(status_code=400, detail="User ID and File ID are required.")
+    if not user_id or not file_id or not service_id:
+        raise HTTPException(status_code=400, detail="User ID, Service ID, and File ID are required.")
 
     try:
-        # Calls the core logic to process the raw text and save the summary
-        summary_path = process_transcript_via_api(user_id, file_id, transcript_text)
+        # FIX: Capture both returned values (summary_path, summary_data)
+        summary_path, summary_data = process_transcript_via_api(user_id, file_id, transcript_text, service_id)
+        
+        # FIX: Include the actual summary text in the response data
+        response_data = {
+            "session_summary_path": summary_path,
+            "summary_text": summary_data.get("summary_text", "Summary text not found in data.")
+        }
+        
+        # Handle the error case from helpers.notemaker.py
+        if summary_path.startswith("Error:"):
+            return StatusResponse(
+                status="error",
+                message=summary_path,
+                data=response_data
+            )
         
         return StatusResponse(
             status="success", 
             message="Transcript processed and individual session summary saved.",
-            data={"session_summary_path": summary_path}
+            data=response_data
         )
     except Exception as e:
         # NOTE: If this fails, check your OPENAI_API_KEY environment variable and API access.
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Summarization failed: {e}")
+        # Ensure the error message is clear
+        raise HTTPException(status_code=500, detail=f"Summarization failed: {type(e).__name__}: {e}")
+    
+
+# @router.post("/summarize", response_model=StatusResponse)
+# async def summarize_transcript(request: TranscriptRequest):
+#     """
+#     Ingests a raw transcript, converts it to a .txt file, generates a session summary, 
+#     and saves the summary JSON in the user's folder.
+#     """
+#     user_id = request.user_id
+#     file_id = request.file_id
+#     transcript_text = request.transcript_text
+
+#     if not user_id or not file_id:
+#         raise HTTPException(status_code=400, detail="User ID and File ID are required.")
+
+#     try:
+#         # Calls the core logic to process the raw text and save the summary
+#         summary_path = process_transcript_via_api(user_id, file_id, transcript_text)
+        
+#         return StatusResponse(
+#             status="success", 
+#             message="Transcript processed and individual session summary saved.",
+#             data={"session_summary_path": summary_path}
+#         )
+#     except Exception as e:
+#         # NOTE: If this fails, check your OPENAI_API_KEY environment variable and API access.
+#         traceback.print_exc()
+#         raise HTTPException(status_code=500, detail=f"Summarization failed: {e}")
 
 
 
@@ -78,13 +125,14 @@ async def update_knowledge_base(request: KBUpdateRequest):
     **vectorizes it using PGVector**, and updates the knowledge base.
     """
     user_id = request.user_id
+    service_id = request.service_id
 
     try:
         user_id = request.user_id
         summaries_batch = request.session_summaries 
         
         # Calls the core logic to consolidate the batch and append to the vector store
-        status_message = update_and_vectorize_knowledge_base(user_id, summaries_batch)
+        status_message = update_and_vectorize_knowledge_base(user_id, service_id, summaries_batch)
         
         if "No summaries" in status_message:
              return StatusResponse(
@@ -107,13 +155,14 @@ async def update_knowledge_base(request: KBUpdateRequest):
 async def query_assistant(request: QueryRequest):
     """Answers a question based on the user's vectorized cumulative summary (now stored in PGVector)."""
     user_id = request.user_id
+    service_id = request.service_id
     query = request.query
 
-    if not user_id or not query:
-        raise HTTPException(status_code=400, detail="User ID and query are required.")
+    if not user_id or not query or not service_id:
+        raise HTTPException(status_code=400, detail="User ID, Service ID, and query are required.")
 
     try:
-        answer = get_answer_from_user_db(user_id, query)
+        answer = get_answer_from_user_db(user_id, service_id, query)
         
         # This check covers the case where the PGVector collection does not yet exist for the user
         if "No knowledge base found" in answer:

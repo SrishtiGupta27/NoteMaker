@@ -38,12 +38,19 @@ text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=10
 # Stable Filenames
 CUMULATIVE_SUMMARY_FILENAME = "cumulative_summary.txt"
 
+# helpers/notemaker.py
+
+def get_collection_name(user_id: str, service_id: str) -> str:
+    """Generates a unique PGVector collection name."""
+    # Collection name is built using both IDs
+    return f"kb_{user_id}_{service_id}"
+
 # PATH MANAGEMENT 
 
-def get_user_paths(user_id: str) -> tuple[str, str]:
+def get_user_paths(user_id: str, service_id: str) -> tuple[str, str]:
     """Ensures user-specific directories exist and returns their paths."""
-    user_transcript_dir = os.path.join(TRANSCRIPT_DIR, user_id) 
-    user_summary_dir = os.path.join(SUMMARY_DIR, user_id)
+    user_transcript_dir = os.path.join(TRANSCRIPT_DIR, user_id, service_id) 
+    user_summary_dir = os.path.join(SUMMARY_DIR, user_id, service_id)
     # The vector dir is less relevant for PGVector but kept for consistency
    
     
@@ -55,29 +62,41 @@ def get_user_paths(user_id: str) -> tuple[str, str]:
 
 # CORE LOGIC: API STAGE 1 (Summarization) 
 
-def generate_session_summary_from_file(raw_text_path: str, file_id: str, user_id: str) -> str:
-    """Generates a summary from a local file and saves it as a JSON file."""
-    _, user_summary_dir = get_user_paths(user_id) 
+def generate_session_summary_from_file(raw_text_path: str, file_id: str, user_id: str, service_id: str) -> tuple[str, dict[str, Any]]:
+    """Generates a summary from a local file and saves it as a JSON file, or loads existing data."""
+    _, user_summary_dir = get_user_paths(user_id, service_id) 
     
     summary_filename = f"{file_id}.json"
     session_summary_path = os.path.join(user_summary_dir, summary_filename)
 
-    # Check for duplicate
+    # Check for duplicate - FIX for "too many values to unpack" error
     if os.path.exists(session_summary_path):
-        print(f"Summary for {file_id} already exists. Skipping summarization.")
-        return session_summary_path
+        print(f"Summary for {file_id} already exists. Loading existing data.")
+        try:
+            with open(session_summary_path, "r", encoding="utf-8") as f:
+                # Load the existing data so it can be returned as the second expected value
+                existing_summary_data = json.load(f)
+            # Must return a tuple of two values (path, data)
+            return session_summary_path, existing_summary_data
+        except Exception as e:
+            print(f"Error loading existing summary file {session_summary_path}: {e}")
+            # If loading fails, treat it like a new run, or raise an error
+            # For this fix, we'll continue to generate a new one below, but first exit the duplicate check.
+            pass # Continue to the generation logic if loading failed.
     
+    # --- Code continues here for generation if file didn't exist or failed to load ---
     try:
         with open(raw_text_path, "r", encoding="utf-8") as f:
             raw_text = f.read()
     except Exception as e:
         print(f"Error reading transcript file {raw_text_path}: {e}")
-        return ""
+        
+        # FIX: Ensure a tuple of two values is returned on early exit path
+        return "", {"summary_text": f"Error: Failed to read transcript file. {e}"}
 
     prompt = f"""
 
 You are an AI assistant tasked with creating a **detailed and structured session summary** from a raw document or meeting transcript.
-
 <DOCUMENT_TEXT>
 {raw_text}
 </DOCUMENT_TEXT>
@@ -107,6 +126,7 @@ Output the detailed session summary. Do not include any text outside the summary
     summary_data = {
         "file_id": file_id,
         "user_id": user_id,
+        "service_id": service_id,
         "summary_text": session_summary_text,
         "timestamp": time.time() # Added timestamp
     }
@@ -115,15 +135,81 @@ Output the detailed session summary. Do not include any text outside the summary
         json.dump(summary_data, f, indent=4)
 
     print(f"Session summary saved: {session_summary_path}")
+    # Must return a tuple of two values (path, data)
     return session_summary_path, summary_data
 
 
-def process_transcript_via_api(user_id: str, file_id: str, transcript_text: str) -> str:
+
+
+# def generate_session_summary_from_file(raw_text_path: str, file_id: str, user_id: str) -> str:
+#     """Generates a summary from a local file and saves it as a JSON file."""
+#     _, user_summary_dir = get_user_paths(user_id) 
+    
+#     summary_filename = f"{file_id}.json"
+#     session_summary_path = os.path.join(user_summary_dir, summary_filename)
+
+#     # Check for duplicate
+#     if os.path.exists(session_summary_path):
+#         print(f"Summary for {file_id} already exists. Skipping summarization.")
+#         return session_summary_path
+    
+#     try:
+#         with open(raw_text_path, "r", encoding="utf-8") as f:
+#             raw_text = f.read()
+#     except Exception as e:
+#         print(f"Error reading transcript file {raw_text_path}: {e}")
+        
+#         return ""
+
+#     prompt = f"""
+
+# You are an AI assistant tasked with creating a **detailed and structured session summary** from a raw document or meeting transcript.
+
+# <DOCUMENT_TEXT>
+# {raw_text}
+# </DOCUMENT_TEXT>
+
+# **Instructions for Detailed Summary Generation:**
+
+# 1.  Identify Core Session Details:** Extract and list the participants, session type, duration, and the overarching goal of the session.
+# 2.  Detailed Content Analysis:**
+#      **Main Concern/Presenting Problem:** Detail the client's primary issue and any related background context (e.g., job stress, specific overthinking patterns).
+#      **Observed Symptoms/Behaviors:** Note the specific physical, emotional, or behavioral manifestations related to the main concern (e.g., tight chest, high self-rating of stress, avoidance).
+#      **Intervention/Technique Applied:** Describe the specific therapeutic technique or intervention introduced or practiced during the session (e.g., slow breathing, cognitive reframing).
+#      **Client Response/Insight:** Capture the client's immediate reaction, realization, or reported feeling change after the intervention or discussion.
+# 3.  Key Decisions, Goals, and Action Items (Homework):** Extract and list all specific, measurable tasks or goals set for the client to work on before the next session, including any tracking or monitoring activities.
+# 4.  Structure and Format:**
+#     * Organize the summary into clear, distinct sections using **markdown headings** (e.g., "Session Details," "Presenting Issue and Assessment," "Interventions and Insights," "Next Steps and Goals").
+#     * Use **bullet points** within each section for clarity and scannability.
+# 5.  Tone and Purpose:** Maintain a neutral, factual, and professional tone. The summary must be detailed enough to stand as a reliable record for future cumulative summaries.
+
+# Output the detailed session summary. Do not include any text outside the summary.
+
+# """
+#     print(f"Generating session summary for: {file_id} for user {user_id}...")
+#     response = llm.invoke(prompt)
+#     session_summary_text = response.content.strip()
+
+#     # Save summary as JSON with metadata
+#     summary_data = {
+#         "file_id": file_id,
+#         "user_id": user_id,
+#         "summary_text": session_summary_text,
+#         "timestamp": time.time() # Added timestamp
+#     }
+    
+#     with open(session_summary_path, "w", encoding="utf-8") as f:
+#         json.dump(summary_data, f, indent=4)
+
+#     print(f"Session summary saved: {session_summary_path}")
+#     return session_summary_path, summary_data
+
+def process_transcript_via_api(user_id: str, file_id: str, transcript_text: str, service_id: str) -> tuple[str, dict[str, Any]]:
     """
     Handles API intake, saves the raw text, generates a summary, and cleans up the raw text.
-    This function is the entry point for API 1.
+    Returns the path and the summary data for API response.
     """
-    user_transcript_dir, _ = get_user_paths(user_id)
+    user_transcript_dir, _ = get_user_paths(user_id, service_id)
     
     # 1. Save the raw transcript to a temporary .txt file
     temp_transcript_path = os.path.join(user_transcript_dir, f"{file_id}.txt")
@@ -134,13 +220,16 @@ def process_transcript_via_api(user_id: str, file_id: str, transcript_text: str)
         print(f"Raw transcript saved to: {temp_transcript_path}")
     except Exception as e:
         print(f"Error saving raw transcript: {e}")
-        return f"Error: Failed to save raw transcript."
+        # FIX: Ensure a tuple of two values is returned on early exit path
+        return f"Error: Failed to save raw transcript.", {"summary_text": f"Error: Failed to save raw transcript. {e}"}
 
     # 2. Generate and save the session summary from the file
-    summary_path, _ = generate_session_summary_from_file(
+    # FIX: Capture both returned values (path, data)
+    summary_path, summary_data = generate_session_summary_from_file(
         raw_text_path=temp_transcript_path, 
         file_id=file_id, 
-        user_id=user_id
+        user_id=user_id,
+        service_id=service_id
     )
     
     # 3. Clean up the temporary raw transcript file
@@ -148,7 +237,41 @@ def process_transcript_via_api(user_id: str, file_id: str, transcript_text: str)
         os.remove(temp_transcript_path)
         print(f"Cleaned up raw transcript file: {temp_transcript_path}")
         
-    return summary_path
+    # FIX: Return both the path and the summary data
+    return summary_path, summary_data
+
+
+# def process_transcript_via_api(user_id: str, file_id: str, transcript_text: str) -> str:
+#     """
+#     Handles API intake, saves the raw text, generates a summary, and cleans up the raw text.
+#     This function is the entry point for API 1.
+#     """
+#     user_transcript_dir, _ = get_user_paths(user_id)
+    
+#     # 1. Save the raw transcript to a temporary .txt file
+#     temp_transcript_path = os.path.join(user_transcript_dir, f"{file_id}.txt")
+    
+#     try:
+#         with open(temp_transcript_path, "w", encoding="utf-8") as f:
+#             f.write(transcript_text)
+#         print(f"Raw transcript saved to: {temp_transcript_path}")
+#     except Exception as e:
+#         print(f"Error saving raw transcript: {e}")
+#         return f"Error: Failed to save raw transcript."
+
+#     # 2. Generate and save the session summary from the file
+#     summary_path, _ = generate_session_summary_from_file(
+#         raw_text_path=temp_transcript_path, 
+#         file_id=file_id, 
+#         user_id=user_id
+#     )
+    
+#     # 3. Clean up the temporary raw transcript file
+#     if os.path.exists(temp_transcript_path):
+#         os.remove(temp_transcript_path)
+#         print(f"Cleaned up raw transcript file: {temp_transcript_path}")
+        
+#     return summary_path
 
 
 # CORE LOGIC: API STAGE 2 (Cumulative Update & Vectorization) 
@@ -176,7 +299,7 @@ def get_all_session_summaries(user_summary_dir: str) -> list[str]:
     return all_summaries
 
 
-def update_and_vectorize_knowledge_base(user_id: str, session_summaries_batch: list[str]) -> str:
+def update_and_vectorize_knowledge_base(user_id: str, service_id: str, session_summaries_batch: list[str]) -> str:
     """
     Accepts a batch of session summaries, consolidates them via LLM, 
     and adds the resulting consolidated document to the user's PGVector KB (appending).
@@ -213,7 +336,7 @@ Output the refined consolidated summary. Do not include any text outside the sum
     new_batch_summary = response.content.strip()
 
     # 3. Save the NEW consolidated summary locally (Optional Audit/Debugging)
-    _, user_summary_dir = get_user_paths(user_id)
+    _, user_summary_dir = get_user_paths(user_id, service_id)
     batch_summary_filename = f"consolidated_batch_{int(batch_id)}.txt"
     cum_summary_path = os.path.join(user_summary_dir, batch_summary_filename)
     
@@ -221,9 +344,9 @@ Output the refined consolidated summary. Do not include any text outside the sum
         f.write(new_batch_summary)
 
     # 4. Vectorize the new summary into PGVector (APPENDING)
-    vectorize_batch_for_appending(user_id, new_batch_summary, batch_id)
+    vectorize_batch_for_appending(user_id, service_id, new_batch_summary, batch_id)
         
-    return f"Status: Knowledge Base successfully updated. Consolidated summary from {num_sessions} sessions appended to KB for {user_id}."
+    return f"Status: Knowledge Base successfully updated. Consolidated summary from {num_sessions} sessions appended to KB for {user_id}/{service_id}."
 
 
 def vectorize_cumulative_summary(user_id: str, cum_summary_path: str) -> None:
@@ -271,7 +394,7 @@ def vectorize_cumulative_summary(user_id: str, cum_summary_path: str) -> None:
     print(f"PGVector database updated for user {user_id} in collection: {collection_name}.")
 
 
-def vectorize_batch_for_appending(user_id: str, batch_text: str, batch_id: float) -> None:
+def vectorize_batch_for_appending(user_id: str, service_id: str, batch_text: str, batch_id: float) -> None:
     """Chunks and vectorizes the new batch text, appending it to the PGVector KB."""
     
     # 1. Chunk the text
@@ -280,11 +403,11 @@ def vectorize_batch_for_appending(user_id: str, batch_text: str, batch_id: float
     # 2. Prepare texts and metadata
     texts = chunks
     metadatas = [
-        {"user_id": user_id, "source": f"batch_{int(batch_id)}"}
+        {"user_id": user_id, "service_id": service_id, "source": f"batch_{int(batch_id)}"}
         for chunk in chunks
     ]
     
-    collection_name = f"kb_{user_id}"
+    collection_name = get_collection_name(user_id, service_id)
     
     try:
         # A. Attempt to connect to the existing PGVector collection
@@ -297,7 +420,7 @@ def vectorize_batch_for_appending(user_id: str, batch_text: str, batch_id: float
         # B. Append the new documents (texts) to the existing collection
         db.add_texts(texts=texts, metadatas=metadatas)
         
-        print(f"PGVector database appended with new batch for user {user_id}.")
+        print(f"PGVector database appended with new batch for user {user_id}/service {service_id}.")
 
     except Exception as e:
         # If the collection doesn't exist (first run), this is the fallback to create it.
@@ -310,16 +433,16 @@ def vectorize_batch_for_appending(user_id: str, batch_text: str, batch_id: float
             connection_string=POSTGRES_CONNECTION_STRING,
             metadatas=metadatas
         )
-        print(f"PGVector database created and populated for user {user_id}.")    
+        print(f"PGVector database created and populated for user {user_id}/service {service_id}.")    
 
 
 # CORE LOGIC: API STAGE 3 (QnA) 
 
-def load_user_vector_db(user_id: str) -> Optional[PGVectorType]:
+def load_user_vector_db(user_id: str, service_id: str) -> Optional[PGVectorType]:
     """Loads the user's vector database (PGVector connection) for query."""
     
-    collection_name = f"kb_{user_id}"
-    print(f"user_id:{user_id}, collection_name:{collection_name}")
+    collection_name = get_collection_name(user_id, service_id)
+    print(f"user_id:{user_id}, service_id:{service_id}, collection_name:{collection_name}")
     
     try:
         # Final and stable connection method: Initialize the PGVector class directly
@@ -333,13 +456,13 @@ def load_user_vector_db(user_id: str) -> Optional[PGVectorType]:
 
     except Exception as e:
         # This logs any real connection failure (e.g., DB offline, bad credentials)
-        print(f"Error loading PGVector for user {user_id}. Error: {e}")
+        print(f"Error loading PGVector for user {user_id}/{service_id}. Error: {e}")
         return None
 
 
-def get_answer_from_user_db(user_id: str, query: str) -> str:
+def get_answer_from_user_db(user_id: str, service_id: str, query: str) -> str:
     """Retrieves relevant context and uses the LLM to answer the user's query."""
-    db = load_user_vector_db(user_id)
+    db = load_user_vector_db(user_id, service_id)
     if not db:
         return "No knowledge base found. Please process transcripts and update the KB first (API 1 and 2)."
 
@@ -375,7 +498,8 @@ NEVER mention, quote, or refer to:
 - Company names, internal project titles, or specific data
 - Phrases like “someone said” or “a team member mentioned”
 
-ALWAYS:
+ALWAYS
+- Never say that I am an AI assistant.
 - Speak directly to the user in a supportive, first-person manner.
 - Offer practical guidance, insights, or suggestions derived from the context and general safe advice.
 - Keep responses concise, clear, and professional.
