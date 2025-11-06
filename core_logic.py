@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from typing import Dict, Any, Optional
 from langchain_community.vectorstores.pgvector import PGVector as PGVectorType 
 from langchain_openai import ChatOpenAI
+from helpers.env import get_db_uri
 
 # CONFIGURATION & INITIAL SETUP 
 load_dotenv()
@@ -22,7 +23,7 @@ os.makedirs(TRANSCRIPT_DIR, exist_ok=True)
 os.makedirs(SUMMARY_DIR, exist_ok=True)
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-POSTGRES_CONNECTION_STRING = os.getenv("POSTGRES_CONNECTION_STRING")
+POSTGRES_CONNECTION_STRING = get_db_uri()
 
 if not OPENAI_API_KEY:
     raise ValueError("OPENAI_API_KEY not found in .env file")
@@ -141,68 +142,6 @@ Output the detailed session summary. Do not include any text outside the summary
 
 
 
-# def generate_session_summary_from_file(raw_text_path: str, file_id: str, user_id: str) -> str:
-#     """Generates a summary from a local file and saves it as a JSON file."""
-#     _, user_summary_dir = get_user_paths(user_id) 
-    
-#     summary_filename = f"{file_id}.json"
-#     session_summary_path = os.path.join(user_summary_dir, summary_filename)
-
-#     # Check for duplicate
-#     if os.path.exists(session_summary_path):
-#         print(f"Summary for {file_id} already exists. Skipping summarization.")
-#         return session_summary_path
-    
-#     try:
-#         with open(raw_text_path, "r", encoding="utf-8") as f:
-#             raw_text = f.read()
-#     except Exception as e:
-#         print(f"Error reading transcript file {raw_text_path}: {e}")
-        
-#         return ""
-
-#     prompt = f"""
-
-# You are an AI assistant tasked with creating a **detailed and structured session summary** from a raw document or meeting transcript.
-
-# <DOCUMENT_TEXT>
-# {raw_text}
-# </DOCUMENT_TEXT>
-
-# **Instructions for Detailed Summary Generation:**
-
-# 1.  Identify Core Session Details:** Extract and list the participants, session type, duration, and the overarching goal of the session.
-# 2.  Detailed Content Analysis:**
-#      **Main Concern/Presenting Problem:** Detail the client's primary issue and any related background context (e.g., job stress, specific overthinking patterns).
-#      **Observed Symptoms/Behaviors:** Note the specific physical, emotional, or behavioral manifestations related to the main concern (e.g., tight chest, high self-rating of stress, avoidance).
-#      **Intervention/Technique Applied:** Describe the specific therapeutic technique or intervention introduced or practiced during the session (e.g., slow breathing, cognitive reframing).
-#      **Client Response/Insight:** Capture the client's immediate reaction, realization, or reported feeling change after the intervention or discussion.
-# 3.  Key Decisions, Goals, and Action Items (Homework):** Extract and list all specific, measurable tasks or goals set for the client to work on before the next session, including any tracking or monitoring activities.
-# 4.  Structure and Format:**
-#     * Organize the summary into clear, distinct sections using **markdown headings** (e.g., "Session Details," "Presenting Issue and Assessment," "Interventions and Insights," "Next Steps and Goals").
-#     * Use **bullet points** within each section for clarity and scannability.
-# 5.  Tone and Purpose:** Maintain a neutral, factual, and professional tone. The summary must be detailed enough to stand as a reliable record for future cumulative summaries.
-
-# Output the detailed session summary. Do not include any text outside the summary.
-
-# """
-#     print(f"Generating session summary for: {file_id} for user {user_id}...")
-#     response = llm.invoke(prompt)
-#     session_summary_text = response.content.strip()
-
-#     # Save summary as JSON with metadata
-#     summary_data = {
-#         "file_id": file_id,
-#         "user_id": user_id,
-#         "summary_text": session_summary_text,
-#         "timestamp": time.time() # Added timestamp
-#     }
-    
-#     with open(session_summary_path, "w", encoding="utf-8") as f:
-#         json.dump(summary_data, f, indent=4)
-
-#     print(f"Session summary saved: {session_summary_path}")
-#     return session_summary_path, summary_data
 
 def process_transcript_via_api(user_id: str, file_id: str, transcript_text: str, service_id: str) -> tuple[str, dict[str, Any]]:
     """
@@ -239,40 +178,6 @@ def process_transcript_via_api(user_id: str, file_id: str, transcript_text: str,
         
     # FIX: Return both the path and the summary data
     return summary_path, summary_data
-
-
-# def process_transcript_via_api(user_id: str, file_id: str, transcript_text: str) -> str:
-#     """
-#     Handles API intake, saves the raw text, generates a summary, and cleans up the raw text.
-#     This function is the entry point for API 1.
-#     """
-#     user_transcript_dir, _ = get_user_paths(user_id)
-    
-#     # 1. Save the raw transcript to a temporary .txt file
-#     temp_transcript_path = os.path.join(user_transcript_dir, f"{file_id}.txt")
-    
-#     try:
-#         with open(temp_transcript_path, "w", encoding="utf-8") as f:
-#             f.write(transcript_text)
-#         print(f"Raw transcript saved to: {temp_transcript_path}")
-#     except Exception as e:
-#         print(f"Error saving raw transcript: {e}")
-#         return f"Error: Failed to save raw transcript."
-
-#     # 2. Generate and save the session summary from the file
-#     summary_path, _ = generate_session_summary_from_file(
-#         raw_text_path=temp_transcript_path, 
-#         file_id=file_id, 
-#         user_id=user_id
-#     )
-    
-#     # 3. Clean up the temporary raw transcript file
-#     if os.path.exists(temp_transcript_path):
-#         os.remove(temp_transcript_path)
-#         print(f"Cleaned up raw transcript file: {temp_transcript_path}")
-        
-#     return summary_path
-
 
 # CORE LOGIC: API STAGE 2 (Cumulative Update & Vectorization) 
 

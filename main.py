@@ -88,36 +88,6 @@ async def summarize_transcript(request: TranscriptRequest):
         raise HTTPException(status_code=500, detail=f"Summarization failed: {type(e).__name__}: {e}")
     
 
-# @router.post("/summarize", response_model=StatusResponse)
-# async def summarize_transcript(request: TranscriptRequest):
-#     """
-#     Ingests a raw transcript, converts it to a .txt file, generates a session summary, 
-#     and saves the summary JSON in the user's folder.
-#     """
-#     user_id = request.user_id
-#     file_id = request.file_id
-#     transcript_text = request.transcript_text
-
-#     if not user_id or not file_id:
-#         raise HTTPException(status_code=400, detail="User ID and File ID are required.")
-
-#     try:
-#         # Calls the core logic to process the raw text and save the summary
-#         summary_path = process_transcript_via_api(user_id, file_id, transcript_text)
-        
-#         return StatusResponse(
-#             status="success", 
-#             message="Transcript processed and individual session summary saved.",
-#             data={"session_summary_path": summary_path}
-#         )
-#     except Exception as e:
-#         # NOTE: If this fails, check your OPENAI_API_KEY environment variable and API access.
-#         traceback.print_exc()
-#         raise HTTPException(status_code=500, detail=f"Summarization failed: {e}")
-
-
-
-# Find this:
 @router.post("/update-kb", response_model=StatusResponse)
 async def update_knowledge_base(request: KBUpdateRequest):
     """
@@ -126,24 +96,36 @@ async def update_knowledge_base(request: KBUpdateRequest):
     """
     user_id = request.user_id
     service_id = request.service_id
+    summaries_batch = request.session_summaries 
+    
+    num_summaries = len(summaries_batch)
 
+    recommendation_message = ""
+    if num_summaries > 10:
+        recommendation_message = f"Warning: You submitted {num_summaries} summaries. It's recommended to process batches of **up to 10** for optimal consolidation quality."
+    elif num_summaries < 5:
+        recommendation_message = f"Note: You submitted {num_summaries} summaries. It's often more efficient to process a batch of **at least 5** sessions."
+    
     try:
-        user_id = request.user_id
-        summaries_batch = request.session_summaries 
         
         # Calls the core logic to consolidate the batch and append to the vector store
         status_message = update_and_vectorize_knowledge_base(user_id, service_id, summaries_batch)
         
+        final_message = status_message
+        if recommendation_message:
+             # Prepend the recommendation message to the status message
+             final_message = recommendation_message + " | " + status_message
+        
         if "No summaries" in status_message:
              return StatusResponse(
                 status="warning", 
-                message=status_message,
+                message=final_message,
                 data={}
             )
 
         return StatusResponse(
             status="success", 
-            message=status_message,
+            message=final_message,
             data={"cumulative_summary_filename": CUMULATIVE_SUMMARY_FILENAME} 
         )
     except Exception as e:
