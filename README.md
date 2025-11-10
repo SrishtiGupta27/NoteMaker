@@ -4,8 +4,9 @@ NoteMaker is a powerful, self-contained module designed to function as a secure 
 
 The module is built with FastAPI and LangChain, using PostgreSQL with PGVector as its storage backend.
 
-<!-- ![NoteMaker Architecture](./Notemaker.jpg)  -->
-<img src="./Notemaker.jpg" width="500" height="700">
+<img src="https://github.com/user-attachments/assets/6423fdcb-2202-46af-8796-846ac93276ed" width="500" height="700">
+
+
 <br>
 ## Core Architecture & Workflow
 
